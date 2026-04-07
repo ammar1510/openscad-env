@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-openscad-env"
+version = "0.1.0"
+description = "OpenSCAD 3D Modeling Environment for OpenEnv"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv-core[core]>=0.2.2",
+    "trimesh>=4.0.0",
+    "numpy>=1.24.0",
+    "httpx>=0.24.0",
+    "openai>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+server = "openscad_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["openscad_env", "openscad_env.server"]
+package-dir = { "openscad_env" = ".", "openscad_env.server" = "server" }
