@@ -7,7 +7,7 @@ and tolerances for grading.
 
 import math
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 @dataclass
@@ -19,6 +19,11 @@ class Task:
     target_volume: Optional[float] = None  # Expected volume in mm^3
     dimension_tolerance: float = 0.1  # Fraction of target allowed as error
     volume_tolerance: float = 0.15  # Fraction of target volume allowed as error
+    target_surface_area: Optional[float] = None  # Expected surface area in mm^2
+    surface_area_tolerance: float = 0.15  # Fraction of target allowed as error
+    # Cross-section profile: list of (relative_height 0-1, expected_area mm^2)
+    target_cross_sections: Optional[List[Tuple[float, float]]] = None
+    cross_section_tolerance: float = 0.20  # Fraction of target area allowed as error
     expected_components: int = 1  # Number of connected mesh components
     hints: str = ""
 
@@ -42,8 +47,14 @@ _register(
         difficulty="easy",
         target_dimensions={"x": 30.0, "y": 20.0, "z": 10.0},
         target_volume=6000.0,
+        target_surface_area=2200.0,  # 2*(30*20 + 30*10 + 20*10)
         dimension_tolerance=0.05,
         volume_tolerance=0.10,
+        # Constant 30*20 = 600 at every height
+        target_cross_sections=[
+            (0.1, 600.0), (0.3, 600.0), (0.5, 600.0),
+            (0.7, 600.0), (0.9, 600.0),
+        ],
         hints=(
             "In OpenSCAD, cube([x,y,z]) creates a box. "
             "Example: cube([30, 20, 10]);"
@@ -59,8 +70,18 @@ _register(
         difficulty="medium",
         target_dimensions={"x": 30.0, "y": 30.0, "z": 25.0},
         target_volume=math.pi * (15**2 - 10**2) * 25,  # ~9817.5
+        # outer lateral + inner lateral + 2 annular rings
+        target_surface_area=math.pi * (2 * 15 * 25 + 2 * 10 * 25 + 2 * (15**2 - 10**2)),  # ~4712.4
         dimension_tolerance=0.05,
         volume_tolerance=0.15,
+        # Annular cross-section pi*(15^2-10^2) ≈ 392.7 at every height
+        target_cross_sections=[
+            (0.1, math.pi * (15**2 - 10**2)),
+            (0.3, math.pi * (15**2 - 10**2)),
+            (0.5, math.pi * (15**2 - 10**2)),
+            (0.7, math.pi * (15**2 - 10**2)),
+            (0.9, math.pi * (15**2 - 10**2)),
+        ],
         hints=(
             "Use difference() to subtract one cylinder from another. The inner "
             "cylinder should be slightly taller to ensure a clean cut."
@@ -78,8 +99,18 @@ _register(
         difficulty="medium",
         target_dimensions={"x": 20.0, "y": 20.0, "z": 45.0},  # 20+15+10
         target_volume=12375.0,  # 20^3 + 15^3 + 10^3
+        # Full SA of each cube minus 2x each contact patch (removed from both surfaces)
+        target_surface_area=3700.0,  # 6*20^2 + 6*15^2 + 6*10^2 - 2*15^2 - 2*10^2
         dimension_tolerance=0.08,
         volume_tolerance=0.12,
+        # Stepped profile: total height=45. Bottom 20mm → 400, middle 15mm → 225, top 10mm → 100
+        target_cross_sections=[
+            (0.1, 400.0),   # 4.5mm  → in bottom block (20x20)
+            (0.3, 400.0),   # 13.5mm → in bottom block (20x20)
+            (0.5, 225.0),   # 22.5mm → in middle block (15x15)
+            (0.7, 225.0),   # 31.5mm → in middle block (15x15)
+            (0.9, 100.0),   # 40.5mm → in top block (10x10)
+        ],
         hints=(
             "Use translate([x,y,z]) to position blocks. Center blocks by "
             "offsetting x and y by half the difference in width."

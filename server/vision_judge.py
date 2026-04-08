@@ -36,6 +36,11 @@ _DEFAULT_CRITERIA = {
     "shape": "Does the object match the described shape?",
     "proportions": "Do the relative proportions look correct?",
     "completeness": "Are all required features present?",
+    "extra_geometry": (
+        "Is the model free of extra, unwanted features not described in the task "
+        "(floating artifacts, unnecessary holes, decorative additions)? "
+        "Score 1.0 if clean, 0.0 if significant unwanted geometry is present."
+    ),
 }
 
 TASK_CRITERIA: Dict[str, Dict[str, str]] = {
@@ -43,6 +48,7 @@ TASK_CRITERIA: Dict[str, Dict[str, str]] = {
         "shape": "Is this a single rectangular box/prism with no extra geometry?",
         "proportions": "Does the box look wider than deep, and shallow in height?",
         "completeness": "Is it a clean solid box with sharp edges and flat faces?",
+        "extra_geometry": "Is the model just a plain box with no extra holes, chamfers, fillets, or floating parts?",
     },
     "hollow_cylinder": {
         "shape": "Is this a hollow cylinder (tube) with a visible hole through the center?",
@@ -54,6 +60,7 @@ TASK_CRITERIA: Dict[str, Dict[str, str]] = {
             "Is the hole clearly visible and does the cylinder "
             "have smooth curved walls?"
         ),
+        "extra_geometry": "Is the model only a tube with no extra cuts, fins, or floating artifacts?",
     },
     "stacking_blocks": {
         "shape": (
@@ -67,6 +74,7 @@ TASK_CRITERIA: Dict[str, Dict[str, str]] = {
             "Are all 3 blocks visible, centered on each other, "
             "and touching with no gaps?"
         ),
+        "extra_geometry": "Are there exactly 3 blocks with no extra shapes, spheres, or floating parts?",
     },
     "phone_stand": {
         "shape": (
@@ -81,10 +89,14 @@ TASK_CRITERIA: Dict[str, Dict[str, str]] = {
             "Is there a visible slot for a phone, a stable base, "
             "and would it plausibly hold a phone?"
         ),
+        "extra_geometry": (
+            "Is the stand a single coherent piece without random floating "
+            "artifacts or unnecessary decorative additions?"
+        ),
     },
 }
 
-SCORE_KEYS = ("shape", "proportions", "completeness")
+SCORE_KEYS = ("shape", "proportions", "completeness", "extra_geometry")
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +158,7 @@ def _build_prompt(task: Task) -> str:
         "- 0.5: Recognizable attempt but flawed\n"
         "- 0.0: Completely wrong, empty, or unrecognizable\n\n"
         "Respond ONLY with JSON, no other text:\n"
-        '{"shape": 0.X, "proportions": 0.X, "completeness": 0.X}'
+        '{"shape": 0.X, "proportions": 0.X, "completeness": 0.X, "extra_geometry": 0.X}'
     )
 
 

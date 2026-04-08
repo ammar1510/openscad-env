@@ -15,10 +15,7 @@ from uuid import uuid4
 
 from openenv.core.env_server.interfaces import Environment
 
-try:
-    from ..models import OpenSCADAction, OpenSCADObservation, OpenSCADState
-except ImportError:
-    from models import OpenSCADAction, OpenSCADObservation, OpenSCADState
+from openscad_env.models import OpenSCADAction, OpenSCADObservation, OpenSCADState
 
 from .rubrics import OpenSCADRubric
 from .tasks import get_task, list_tasks
@@ -116,13 +113,15 @@ class OpenSCADEnvironment(Environment):
         scad_path = os.path.join(self._work_dir, f"{ep_id}.scad")
         stl_path = os.path.join(self._work_dir, f"{ep_id}.stl")
 
-        compile_success, compile_error = self._compile(
+        compile_success, compile_error, compile_warnings = self._compile(
             action.code, scad_path, stl_path, timeout_s
         )
 
-        dimensions, volume, is_watertight, component_count = {}, 0.0, False, 0
+        dimensions, volume, surface_area, is_watertight, component_count = (
+            {}, 0.0, 0.0, False, 0,
+        )
         if compile_success:
-            dimensions, volume, is_watertight, component_count, analysis_error = (
+            dimensions, volume, surface_area, is_watertight, component_count, analysis_error = (
                 self._analyse(stl_path)
             )
             if analysis_error:
@@ -135,8 +134,10 @@ class OpenSCADEnvironment(Environment):
             available_tasks=list_tasks(),
             compile_success=compile_success,
             compile_error=compile_error,
+            compile_warnings=compile_warnings,
             dimensions=dimensions,
             volume=volume,
+            surface_area=surface_area,
             is_watertight=is_watertight,
             component_count=component_count,
             score=0.0,
@@ -146,6 +147,7 @@ class OpenSCADEnvironment(Environment):
         )
 
         object.__setattr__(observation, "_scad_path", scad_path)
+        object.__setattr__(observation, "_stl_path", stl_path)
         object.__setattr__(observation, "_work_dir", self._work_dir)
 
         reward = self._apply_rubric(action, observation)
@@ -166,6 +168,7 @@ class OpenSCADEnvironment(Environment):
 
         try:
             object.__delattr__(observation, "_scad_path")
+            object.__delattr__(observation, "_stl_path")
             object.__delattr__(observation, "_work_dir")
         except AttributeError:
             pass
@@ -225,17 +228,26 @@ class OpenSCADEnvironment(Environment):
                     if result.stderr
                     else "Unknown compilation error"
                 )
-            return success, error
+
+            # Extract WARNING lines from stderr even on success
+            warnings = []
+            if result.stderr:
+                for line in result.stderr.splitlines():
+                    stripped = line.strip()
+                    if stripped.upper().startswith("WARNING"):
+                        warnings.append(stripped)
+
+            return success, error, warnings
 
         except subprocess.TimeoutExpired:
-            return False, "OpenSCAD compilation timed out (>30s)"
+            return False, "OpenSCAD compilation timed out (>30s)", []
         except FileNotFoundError:
             return False, (
                 "OpenSCAD binary not found. Install with: "
                 "apt-get install openscad (Linux) or brew install openscad (macOS)"
-            )
+            ), []
         except Exception as e:
-            return False, f"Compilation error: {e}"
+            return False, f"Compilation error: {e}", []
 
     @staticmethod
     def _analyse(stl_path: str) -> tuple:
@@ -246,6 +258,7 @@ class OpenSCADEnvironment(Environment):
             mesh = trimesh.load(stl_path)
             dimensions = {}
             volume = 0.0
+            surface_area = 0.0
             is_watertight = False
 
             if hasattr(mesh, "bounding_box") and mesh.bounding_box is not None:
@@ -257,12 +270,14 @@ class OpenSCADEnvironment(Environment):
                 }
             if mesh.is_volume:
                 volume = round(float(mesh.volume), 3)
+            if hasattr(mesh, "area"):
+                surface_area = round(float(mesh.area), 3)
             is_watertight = bool(mesh.is_watertight)
 
             components = mesh.split() if hasattr(mesh, "split") else [mesh]
             component_count = len(components)
 
-            return dimensions, volume, is_watertight, component_count, None
+            return dimensions, volume, surface_area, is_watertight, component_count, None
 
         except Exception as e:
-            return {}, 0.0, False, 0, f"STL analysis failed: {e}"
+            return {}, 0.0, 0.0, False, 0, f"STL analysis failed: {e}"

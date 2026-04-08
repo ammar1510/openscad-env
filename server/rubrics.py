@@ -99,6 +99,108 @@ class VolumeRubric(Rubric):
         return max(0.0, 1.0 - error / self._task.volume_tolerance)
 
 
+class SurfaceAreaRubric(Rubric):
+    """Surface area accuracy against the task target."""
+
+    def __init__(self, task: Task):
+        super().__init__()
+        self._task = task
+
+    def forward(self, action: Any, observation: Any) -> float:
+        target = self._task.target_surface_area
+        if target is None or target == 0:
+            return 1.0
+        if not observation.compile_success:
+            return 0.0
+        tol = self._task.surface_area_tolerance
+        if tol <= 0:
+            return 1.0
+
+        actual = getattr(observation, "surface_area", 0.0)
+        error = abs(actual - target) / target
+        return max(0.0, 1.0 - error / tol)
+
+
+class CrossSectionRubric(Rubric):
+    """Compares cross-sectional area profile at specified heights.
+
+    Slices the mesh horizontally at each target height and scores
+    how well each slice's area matches the expected value.
+    """
+
+    def __init__(self, task: Task):
+        super().__init__()
+        self._task = task
+
+    def forward(self, action: Any, observation: Any) -> float:
+        targets = self._task.target_cross_sections
+        if not targets:
+            return 1.0
+        if not observation.compile_success:
+            return 0.0
+
+        stl_path = getattr(observation, "_stl_path", None)
+        if not stl_path:
+            return 0.0
+
+        try:
+            import numpy as np
+            import trimesh
+
+            mesh = trimesh.load(stl_path)
+        except Exception:
+            return 0.0
+
+        bbox_min = mesh.bounds[0]
+        bbox_max = mesh.bounds[1]
+        z_min, z_max = float(bbox_min[2]), float(bbox_max[2])
+        z_range = z_max - z_min
+        if z_range <= 0:
+            return 0.0
+
+        tol = self._task.cross_section_tolerance
+        scores = []
+        for rel_height, expected_area in targets:
+            z = z_min + rel_height * z_range
+            try:
+                section = mesh.section(
+                    plane_origin=[0, 0, z],
+                    plane_normal=[0, 0, 1],
+                )
+                if section is None:
+                    scores.append(0.0)
+                    continue
+                planar, _ = section.to_planar()
+                actual_area = float(planar.area)
+            except Exception:
+                scores.append(0.0)
+                continue
+
+            if expected_area <= 0:
+                scores.append(1.0 if actual_area <= 0 else 0.0)
+                continue
+
+            error = abs(actual_area - expected_area) / expected_area
+            scores.append(max(0.0, 1.0 - error / tol))
+
+        return sum(scores) / len(scores) if scores else 0.0
+
+
+class CodeParsabilityRubric(Rubric):
+    """Penalises OpenSCAD compiler warnings (even when compilation succeeds).
+
+    1.0 for zero warnings, -0.25 per warning, floored at 0.0.
+    """
+
+    _PENALTY_PER_WARNING = 0.25
+
+    def forward(self, action: Any, observation: Any) -> float:
+        if not observation.compile_success:
+            return 0.0
+        warnings = getattr(observation, "compile_warnings", [])
+        return max(0.0, 1.0 - len(warnings) * self._PENALTY_PER_WARNING)
+
+
 class VisionJudgeRubric(Rubric):
     """Renders the .scad file and scores via a vision LLM."""
 
@@ -146,19 +248,25 @@ class VisionJudgeRubric(Rubric):
 # ---------------------------------------------------------------------------
 
 _WEIGHTS_WITH_VISION = {
-    "compilation": 0.10,
+    "compilation": 0.05,
     "watertight": 0.05,
     "component_count": 0.05,
-    "dimensions": 0.25,
-    "volume": 0.15,
-    "vision": 0.40,
+    "cross_section": 0.10,
+    "code_parsability": 0.05,
+    "dimensions": 0.15,
+    "volume": 0.05,
+    "surface_area": 0.05,
+    "vision": 0.45,
 }
 _WEIGHTS_GEOMETRIC = {
-    "compilation": 0.15,
+    "compilation": 0.05,
     "watertight": 0.05,
     "component_count": 0.10,
-    "dimensions": 0.40,
-    "volume": 0.30,
+    "cross_section": 0.15,
+    "code_parsability": 0.05,
+    "dimensions": 0.25,
+    "volume": 0.20,
+    "surface_area": 0.15,
 }
 
 
@@ -177,29 +285,36 @@ class OpenSCADRubric(Rubric):
         self.compilation = CompilationRubric()
         self.watertight = WatertightRubric()
         self.component_count = ComponentCountRubric(task)
+        self.cross_section = CrossSectionRubric(task)
+        self.code_parsability = CodeParsabilityRubric()
         self.dimensions = DimensionsRubric(task)
         self.volume = VolumeRubric(task)
+        self.surface_area = SurfaceAreaRubric(task)
 
         if self._vision_enabled:
             self.vision = VisionJudgeRubric(task, vision_config)
             w = _WEIGHTS_WITH_VISION
             weights = [
                 w["compilation"], w["watertight"], w["component_count"],
-                w["dimensions"], w["volume"], w["vision"],
+                w["cross_section"], w["code_parsability"], w["dimensions"],
+                w["volume"], w["surface_area"], w["vision"],
             ]
             rubrics = [
                 self.compilation, self.watertight, self.component_count,
-                self.dimensions, self.volume, self.vision,
+                self.cross_section, self.code_parsability, self.dimensions,
+                self.volume, self.surface_area, self.vision,
             ]
         else:
             w = _WEIGHTS_GEOMETRIC
             weights = [
                 w["compilation"], w["watertight"], w["component_count"],
-                w["dimensions"], w["volume"],
+                w["cross_section"], w["code_parsability"], w["dimensions"],
+                w["volume"], w["surface_area"],
             ]
             rubrics = [
                 self.compilation, self.watertight, self.component_count,
-                self.dimensions, self.volume,
+                self.cross_section, self.code_parsability, self.dimensions,
+                self.volume, self.surface_area,
             ]
 
         scorer = WeightedSum(rubrics, weights)
@@ -212,8 +327,11 @@ class OpenSCADRubric(Rubric):
         self.compilation.last_score = None
         self.watertight.last_score = None
         self.component_count.last_score = None
+        self.cross_section.last_score = None
+        self.code_parsability.last_score = None
         self.dimensions.last_score = None
         self.volume.last_score = None
+        self.surface_area.last_score = None
         if self._vision_enabled:
             self.vision.last_score = None
             self.vision.breakdown = {}

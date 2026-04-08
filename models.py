@@ -40,6 +40,10 @@ class OpenSCADObservation(Observation):
     compile_error: str = Field(
         default="", description="Compilation error message, empty if success"
     )
+    compile_warnings: List[str] = Field(
+        default_factory=list,
+        description="Warning lines from OpenSCAD stderr (even on successful compile)",
+    )
 
     # Geometric measurements
     dimensions: Dict[str, float] = Field(
@@ -47,6 +51,7 @@ class OpenSCADObservation(Observation):
         description="Bounding box dimensions {x, y, z} in mm",
     )
     volume: float = Field(default=0.0, description="Mesh volume in mm^3")
+    surface_area: float = Field(default=0.0, description="Mesh surface area in mm^2")
     is_watertight: bool = Field(
         default=False, description="Whether the mesh is a valid watertight solid"
     )
