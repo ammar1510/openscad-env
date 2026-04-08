@@ -29,6 +29,8 @@ import sys
 import time
 from typing import List
 
+from openai import APITimeoutError, APIConnectionError, RateLimitError
+
 from openai import OpenAI
 
 from openscad_env import OpenSCADAction, OpenSCADEnv
@@ -40,7 +42,7 @@ from openscad_env import OpenSCADAction, OpenSCADEnv
 API_BASE_URL = os.environ.get("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.environ.get("MODEL_NAME", "openai/gpt-oss-120b:novita")
 API_KEY = os.environ.get("HF_TOKEN") or os.environ.get("API_KEY", "")
-ENV_URL = os.environ.get("ENV_URL", "http://localhost:8000")
+ENV_URL = os.environ.get("ENV_URL", "https://ammar-shaikh-openscad-env.hf.space")
 
 MAX_STEPS = 3  # max attempts per task
 TASKS = ["basic_box", "hollow_cylinder", "stacking_blocks", "phone_stand"]
@@ -175,15 +177,26 @@ def run_task(
     best_score = 0.0
 
     for step in range(1, MAX_STEPS + 1):
-        # Query the LLM
-        response = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=messages,
-            max_tokens=2048,
-            temperature=0.2,
-        )
+        # Query the LLM with retry logic
+        assistant_text = None
+        for attempt in range(3):
+            try:
+                response = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=messages,
+                    max_tokens=2048,
+                    temperature=0.2,
+                )
+                assistant_text = response.choices[0].message.content.strip()
+                break
+            except (APITimeoutError, APIConnectionError, RateLimitError) as e:
+                if attempt == 2:
+                    raise
+                wait = 2 ** attempt
+                # print(f"[DEBUG] LLM call failed (attempt {attempt+1}/3): {e}, retrying in {wait}s")
+                time.sleep(wait)
 
-        assistant_text = response.choices[0].message.content.strip()
+        assert assistant_text is not None
         messages.append({"role": "assistant", "content": assistant_text})
 
         code = extract_openscad_code(assistant_text)
@@ -192,9 +205,9 @@ def run_task(
         result = env.step(OpenSCADAction(code=code))
         obs = result.observation
 
-        if not obs.compile_success:
-            print(f"[DEBUG] task_id={task_id} step={step} compile_error={obs.compile_error}")
-            print(f"[DEBUG] extracted code (first 200 chars): {code[:200]}")
+        # if not obs.compile_success:
+        #     print(f"[DEBUG] task_id={task_id} step={step} compile_error={obs.compile_error}")
+        #     print(f"[DEBUG] extracted code (first 200 chars): {code[:200]}")
 
         log_step(
             task_id=task_id,
@@ -237,7 +250,7 @@ def main() -> None:
 
     print(f"Config: model={MODEL_NAME} env={ENV_URL} tasks={TASKS}")
 
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY, timeout=60.0)
     env = OpenSCADEnv(base_url=ENV_URL).sync()
 
     scores = {}
