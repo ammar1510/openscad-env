@@ -125,31 +125,26 @@ def build_feedback_prompt(
 # ---------------------------------------------------------------------------
 
 
-def log_start(task_id: str, task_description: str) -> None:
+def log_start(task_id: str) -> None:
+    print(f"[START] task={task_id} env=openscad model={MODEL_NAME}", flush=True)
+
+
+def log_step(step: int, action: str, reward: float, done: bool, error: str | None) -> None:
+    error_val = error if error else "null"
+    done_val = str(done).lower()
+    # truncate action to avoid very long lines
+    action_short = action[:80].replace("\n", " ")
     print(
-        f"[START] task_id={task_id} "
-        f"description={json.dumps(task_description[:100])}"
+        f"[STEP] step={step} action={action_short} reward={reward:.2f} done={done_val} error={error_val}",
+        flush=True,
     )
 
 
-def log_step(
-    task_id: str,
-    step: int,
-    reward: float,
-    done: bool,
-    score_breakdown: dict,
-) -> None:
+def log_end(success: bool, steps: int, score: float, rewards: list) -> None:
+    rewards_str = ",".join(f"{r:.2f}" for r in rewards)
     print(
-        f"[STEP] task_id={task_id} step={step} "
-        f"reward={reward:.4f} done={done} "
-        f"breakdown={json.dumps(score_breakdown)}"
-    )
-
-
-def log_end(task_id: str, final_reward: float, steps_taken: int) -> None:
-    print(
-        f"[END] task_id={task_id} "
-        f"final_reward={final_reward:.4f} steps={steps_taken}"
+        f"[END] success={str(success).lower()} steps={steps} score={score:.3f} rewards={rewards_str}",
+        flush=True,
     )
 
 
@@ -167,7 +162,7 @@ def run_task(
     result = env.reset(task_id=task_id)
     obs = result.observation
 
-    log_start(task_id, obs.task_description)
+    log_start(task_id)
 
     messages: List[dict] = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -175,70 +170,74 @@ def run_task(
     ]
 
     best_score = 0.0
+    rewards: List[float] = []
+    steps_taken = 0
 
-    for step in range(1, MAX_STEPS + 1):
-        # Query the LLM with retry logic
-        assistant_text = None
-        for attempt in range(3):
-            try:
-                response = client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=messages,
-                    max_tokens=2048,
-                    temperature=0.2,
-                )
-                assistant_text = response.choices[0].message.content.strip()
-                break
-            except (APITimeoutError, APIConnectionError, RateLimitError) as e:
-                if attempt == 2:
-                    raise
-                wait = 2 ** attempt
-                # print(f"[DEBUG] LLM call failed (attempt {attempt+1}/3): {e}, retrying in {wait}s")
-                time.sleep(wait)
+    try:
+        for step in range(1, MAX_STEPS + 1):
+            steps_taken = step
+            # Query the LLM with retry logic
+            assistant_text = None
+            for attempt in range(3):
+                try:
+                    response = client.chat.completions.create(
+                        model=MODEL_NAME,
+                        messages=messages,
+                        max_tokens=2048,
+                        temperature=0.2,
+                    )
+                    assistant_text = response.choices[0].message.content.strip()
+                    break
+                except (APITimeoutError, APIConnectionError, RateLimitError) as e:
+                    if attempt == 2:
+                        raise
+                    wait = 2 ** attempt
+                    time.sleep(wait)
 
-        assert assistant_text is not None
-        messages.append({"role": "assistant", "content": assistant_text})
+            assert assistant_text is not None
+            messages.append({"role": "assistant", "content": assistant_text})
 
-        code = extract_openscad_code(assistant_text)
+            code = extract_openscad_code(assistant_text)
 
-        # Submit to environment
-        result = env.step(OpenSCADAction(code=code))
-        obs = result.observation
+            # Submit to environment
+            result = env.step(OpenSCADAction(code=code))
+            obs = result.observation
 
-        # if not obs.compile_success:
-        #     print(f"[DEBUG] task_id={task_id} step={step} compile_error={obs.compile_error}")
-        #     print(f"[DEBUG] extracted code (first 200 chars): {code[:200]}")
+            current_score = result.reward or 0.0
+            rewards.append(current_score)
+            best_score = max(best_score, current_score)
 
-        log_step(
-            task_id=task_id,
-            step=step,
-            reward=result.reward or 0.0,
-            done=result.done,
-            score_breakdown=obs.score_breakdown,
-        )
-
-        current_score = result.reward or 0.0
-        best_score = max(best_score, current_score)
-
-        # Stop early if we got a good score
-        if current_score >= 0.9:
-            break
-
-        # Build feedback for next attempt
-        if step < MAX_STEPS:
-            feedback = build_feedback_prompt(
+            error = obs.compile_error if not obs.compile_success else None
+            log_step(
                 step=step,
-                compile_success=obs.compile_success,
-                compile_error=obs.compile_error,
-                dimensions=obs.dimensions,
-                volume=obs.volume,
-                score=obs.score,
-                score_breakdown=obs.score_breakdown,
+                action=code,
+                reward=current_score,
+                done=result.done,
+                error=error,
             )
-            messages.append({"role": "user", "content": feedback})
 
-    log_end(task_id, best_score, step)
-    return best_score
+            # Stop early if we got a good score
+            if current_score >= 0.9:
+                break
+
+            # Build feedback for next attempt
+            if step < MAX_STEPS:
+                feedback = build_feedback_prompt(
+                    step=step,
+                    compile_success=obs.compile_success,
+                    compile_error=obs.compile_error,
+                    dimensions=obs.dimensions,
+                    volume=obs.volume,
+                    score=obs.score,
+                    score_breakdown=obs.score_breakdown,
+                )
+                messages.append({"role": "user", "content": feedback})
+    finally:
+        final_score = min(max(best_score, 0.01), 0.99)
+        success = best_score >= 0.5
+        log_end(success=success, steps=steps_taken, score=final_score, rewards=rewards)
+
+    return final_score
 
 
 def main() -> None:
@@ -259,9 +258,9 @@ def main() -> None:
     for task_id in TASKS:
         try:
             score = run_task(env, client, task_id)
-            scores[task_id] = min(max(score, 0.01), 0.99)
+            scores[task_id] = score
         except Exception as e:
-            print(f"[END] task_id={task_id} final_reward=0.0000 error={e}")
+            # log_end is already emitted by run_task's finally block
             scores[task_id] = 0.01
 
     elapsed = time.time() - start_time
