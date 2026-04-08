@@ -14,6 +14,15 @@ from openenv.core.rubrics.containers import WeightedSum
 from . import vision_judge
 from .tasks import Task
 
+# Hackathon requires scores strictly between 0 and 1 (exclusive).
+_SCORE_MIN = 0.001
+_SCORE_MAX = 0.999
+
+
+def _clamp(score: float) -> float:
+    """Clamp a score to the open interval (0, 1)."""
+    return max(_SCORE_MIN, min(_SCORE_MAX, score))
+
 
 # ---------------------------------------------------------------------------
 # Component rubrics
@@ -24,7 +33,7 @@ class CompilationRubric(Rubric):
     """Binary: 1.0 if compilation succeeded, 0.0 otherwise."""
 
     def forward(self, action: Any, observation: Any) -> float:
-        return 1.0 if observation.compile_success else 0.0
+        return _clamp(1.0 if observation.compile_success else 0.0)
 
 
 class WatertightRubric(Rubric):
@@ -32,8 +41,8 @@ class WatertightRubric(Rubric):
 
     def forward(self, action: Any, observation: Any) -> float:
         if not observation.compile_success:
-            return 0.0
-        return 1.0 if observation.is_watertight else 0.0
+            return _clamp(0.0)
+        return _clamp(1.0 if observation.is_watertight else 0.0)
 
 
 class ComponentCountRubric(Rubric):
@@ -48,12 +57,12 @@ class ComponentCountRubric(Rubric):
 
     def forward(self, action: Any, observation: Any) -> float:
         if not observation.compile_success:
-            return 0.0
+            return _clamp(0.0)
         actual = getattr(observation, "component_count", 0)
         if actual == 0:
-            return 0.0
+            return _clamp(0.0)
         diff = abs(actual - self._expected)
-        return max(0.0, 1.0 - diff / max(self._expected, 1))
+        return _clamp(1.0 - diff / max(self._expected, 1))
 
 
 class DimensionsRubric(Rubric):
@@ -65,7 +74,7 @@ class DimensionsRubric(Rubric):
 
     def forward(self, action: Any, observation: Any) -> float:
         if not observation.compile_success or not observation.dimensions:
-            return 0.0
+            return _clamp(0.0)
 
         scores = []
         for axis, target_val in self._task.target_dimensions.items():
@@ -76,7 +85,7 @@ class DimensionsRubric(Rubric):
                     max(0.0, 1.0 - error / self._task.dimension_tolerance)
                 )
 
-        return sum(scores) / len(scores) if scores else 0.0
+        return _clamp(sum(scores) / len(scores) if scores else 0.0)
 
 
 class VolumeRubric(Rubric):
@@ -89,14 +98,14 @@ class VolumeRubric(Rubric):
     def forward(self, action: Any, observation: Any) -> float:
         tv = self._task.target_volume
         if tv is None or tv == 0:
-            return 1.0
+            return _clamp(1.0)
         if not observation.compile_success:
-            return 0.0
+            return _clamp(0.0)
         if self._task.volume_tolerance <= 0:
-            return 1.0
+            return _clamp(1.0)
 
         error = abs(observation.volume - tv) / tv
-        return max(0.0, 1.0 - error / self._task.volume_tolerance)
+        return _clamp(1.0 - error / self._task.volume_tolerance)
 
 
 class SurfaceAreaRubric(Rubric):
@@ -109,16 +118,16 @@ class SurfaceAreaRubric(Rubric):
     def forward(self, action: Any, observation: Any) -> float:
         target = self._task.target_surface_area
         if target is None or target == 0:
-            return 1.0
+            return _clamp(1.0)
         if not observation.compile_success:
-            return 0.0
+            return _clamp(0.0)
         tol = self._task.surface_area_tolerance
         if tol <= 0:
-            return 1.0
+            return _clamp(1.0)
 
         actual = getattr(observation, "surface_area", 0.0)
         error = abs(actual - target) / target
-        return max(0.0, 1.0 - error / tol)
+        return _clamp(1.0 - error / tol)
 
 
 class CrossSectionRubric(Rubric):
@@ -183,7 +192,7 @@ class CrossSectionRubric(Rubric):
             error = abs(actual_area - expected_area) / expected_area
             scores.append(max(0.0, 1.0 - error / tol))
 
-        return sum(scores) / len(scores) if scores else 0.0
+        return _clamp(sum(scores) / len(scores) if scores else 0.0)
 
 
 class CodeParsabilityRubric(Rubric):
@@ -196,9 +205,9 @@ class CodeParsabilityRubric(Rubric):
 
     def forward(self, action: Any, observation: Any) -> float:
         if not observation.compile_success:
-            return 0.0
+            return _clamp(0.0)
         warnings = getattr(observation, "compile_warnings", [])
-        return max(0.0, 1.0 - len(warnings) * self._PENALTY_PER_WARNING)
+        return _clamp(1.0 - len(warnings) * self._PENALTY_PER_WARNING)
 
 
 class VisionJudgeRubric(Rubric):
@@ -213,16 +222,16 @@ class VisionJudgeRubric(Rubric):
     def forward(self, action: Any, observation: Any) -> float:
         self.breakdown = {}
         if not observation.compile_success:
-            return 0.0
+            return _clamp(0.0)
 
         scad_path = getattr(observation, "_scad_path", None)
         work_dir = getattr(observation, "_work_dir", None)
         if not scad_path or not work_dir:
-            return 0.0
+            return _clamp(0.0)
 
         rendered = vision_judge.render_views(scad_path, work_dir)
         if not rendered:
-            return 0.0
+            return _clamp(0.0)
 
         import os
 
@@ -234,7 +243,7 @@ class VisionJudgeRubric(Rubric):
                 model=self._config["model"],
                 api_key=self._config["api_key"],
             )
-            return score
+            return _clamp(score)
         finally:
             for png_path in rendered.values():
                 try:
@@ -321,7 +330,7 @@ class OpenSCADRubric(Rubric):
         object.__setattr__(self, "_scorer", scorer)
 
     def forward(self, action: Any, observation: Any) -> float:
-        return self._scorer(action, observation)
+        return _clamp(self._scorer(action, observation))
 
     def reset(self) -> None:
         self.compilation.last_score = None
