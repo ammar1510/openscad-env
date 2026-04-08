@@ -192,6 +192,10 @@ def run_task(
         result = env.step(OpenSCADAction(code=code))
         obs = result.observation
 
+        if not obs.compile_success:
+            print(f"[DEBUG] task_id={task_id} step={step} compile_error={obs.compile_error}")
+            print(f"[DEBUG] extracted code (first 200 chars): {code[:200]}")
+
         log_step(
             task_id=task_id,
             step=step,

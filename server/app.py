@@ -9,16 +9,10 @@ Endpoints:
     - WS /ws: WebSocket endpoint for persistent sessions
 """
 
-try:
-    from openenv.core.env_server.http_server import create_app
+from openenv.core.env_server.http_server import create_app
 
-    from ..models import OpenSCADAction, OpenSCADObservation
-    from .openscad_environment import OpenSCADEnvironment
-except ImportError:
-    from openenv.core.env_server.http_server import create_app
-
-    from models import OpenSCADAction, OpenSCADObservation
-    from server.openscad_environment import OpenSCADEnvironment
+from openscad_env.models import OpenSCADAction, OpenSCADObservation
+from .openscad_environment import OpenSCADEnvironment
 
 
 app = create_app(
