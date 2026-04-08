@@ -259,10 +259,10 @@ def main() -> None:
     for task_id in TASKS:
         try:
             score = run_task(env, client, task_id)
-            scores[task_id] = score
+            scores[task_id] = min(max(score, 0.01), 0.99)
         except Exception as e:
             print(f"[END] task_id={task_id} final_reward=0.0000 error={e}")
-            scores[task_id] = 0.0
+            scores[task_id] = 0.01
 
     elapsed = time.time() - start_time
 
