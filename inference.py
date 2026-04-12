@@ -55,7 +55,14 @@ SYSTEM_PROMPT = (
     "- The code must be a complete, self-contained script\n"
     "- Use precise dimensions as specified in the task\n"
     "- Use $fn=64 or higher for smooth curved surfaces\n"
-    "- Do not include comments explaining the code, just write the code"
+    "- Do not include comments explaining the code, just write the code\n\n"
+    "Critical OpenSCAD syntax rules:\n"
+    "- Geometry calls are STATEMENTS, not expressions. You CANNOT assign geometry "
+    "to a variable. WRONG: base = cube([30,20,10]); CORRECT: cube([30,20,10]);\n"
+    "- If you define a module, you MUST call it at the top level of the script. "
+    "WRONG: module foo() { cube([10,10,10]); } CORRECT: module foo() { cube([10,10,10]); } foo();\n"
+    "- The top level of your script must contain at least one geometry statement "
+    "that produces visible output."
 )
 
 
@@ -199,6 +206,19 @@ def run_task(
 
             code = extract_openscad_code(assistant_text)
 
+            # Guard against empty extraction — don't waste an env step
+            if not code:
+                print(f"[WARN] step={step} model returned empty code, injecting retry message", flush=True)
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        "Your response contained no OpenSCAD code. "
+                        "You MUST respond with a complete OpenSCAD script "
+                        "inside a ```openscad code block."
+                    ),
+                })
+                continue
+
             # Submit to environment
             result = env.step(OpenSCADAction(code=code))
             obs = result.observation
@@ -261,6 +281,7 @@ def main() -> None:
             scores[task_id] = score
         except Exception as e:
             # log_end is already emitted by run_task's finally block
+            print(f"[ERROR] task={task_id} error={type(e).__name__}: {e}", file=sys.stderr, flush=True)
             scores[task_id] = 0.01
 
     elapsed = time.time() - start_time
