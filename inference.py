@@ -45,7 +45,7 @@ API_KEY = os.environ.get("HF_TOKEN") or os.environ.get("API_KEY", "")
 ENV_URL = os.environ.get("ENV_URL", "https://ammar-shaikh-openscad-env.hf.space")
 
 MAX_STEPS = 3  # max attempts per task
-TASKS = ["basic_box", "hollow_cylinder", "stacking_blocks", "phone_stand"]
+TASKS = ["basic_box", "hollow_cylinder", "stacking_blocks", "phone_stand", "spur_gear", "bracket_with_holes"]
 
 SYSTEM_PROMPT = (
     "You are an expert OpenSCAD programmer. You write complete, valid OpenSCAD "
@@ -182,7 +182,6 @@ def run_task(
 
     try:
         for step in range(1, MAX_STEPS + 1):
-            steps_taken = step
             # Query the LLM with retry logic
             assistant_text = None
             for attempt in range(3):
@@ -208,7 +207,7 @@ def run_task(
 
             # Guard against empty extraction — don't waste an env step
             if not code:
-                print(f"[WARN] step={step} model returned empty code, injecting retry message", flush=True)
+                print(f"[WARN] step={step} model returned empty code, injecting retry message", file=sys.stderr, flush=True)
                 messages.append({
                     "role": "user",
                     "content": (
@@ -218,6 +217,8 @@ def run_task(
                     ),
                 })
                 continue
+
+            steps_taken = step
 
             # Submit to environment
             result = env.step(OpenSCADAction(code=code))
@@ -267,15 +268,15 @@ def main() -> None:
         )
         sys.exit(1)
 
-    print(f"Config: model={MODEL_NAME} env={ENV_URL} tasks={TASKS}")
+    print(f"Config: model={MODEL_NAME} env={ENV_URL} tasks={TASKS}", file=sys.stderr)
 
     client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY, timeout=60.0)
-    env = OpenSCADEnv(base_url=ENV_URL).sync()
 
     scores = {}
     start_time = time.time()
 
     for task_id in TASKS:
+        env = OpenSCADEnv(base_url=ENV_URL).sync()
         try:
             score = run_task(env, client, task_id)
             scores[task_id] = score
@@ -283,19 +284,24 @@ def main() -> None:
             # log_end is already emitted by run_task's finally block
             print(f"[ERROR] task={task_id} error={type(e).__name__}: {e}", file=sys.stderr, flush=True)
             scores[task_id] = 0.01
+        finally:
+            try:
+                env.close()
+            except Exception:
+                pass
 
     elapsed = time.time() - start_time
 
     # Summary
-    print("\n" + "=" * 60)
-    print("INFERENCE SUMMARY")
-    print("=" * 60)
+    print("\n" + "=" * 60, file=sys.stderr)
+    print("INFERENCE SUMMARY", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
     for tid, score in scores.items():
-        print(f"  {tid:20s}  {score:.4f}")
+        print(f"  {tid:20s}  {score:.4f}", file=sys.stderr)
     avg = sum(scores.values()) / len(scores) if scores else 0.0
-    print(f"  {'AVERAGE':20s}  {avg:.4f}")
-    print(f"  {'TIME':20s}  {elapsed:.1f}s")
-    print("=" * 60)
+    print(f"  {'AVERAGE':20s}  {avg:.4f}", file=sys.stderr)
+    print(f"  {'TIME':20s}  {elapsed:.1f}s", file=sys.stderr)
+    print("=" * 60, file=sys.stderr)
 
 
 if __name__ == "__main__":
