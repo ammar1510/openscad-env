@@ -207,7 +207,7 @@ def run_task(
 
             # Guard against empty extraction — don't waste an env step
             if not code:
-                print(f"[WARN] step={step} model returned empty code, injecting retry message", file=sys.stderr, flush=True)
+
                 messages.append({
                     "role": "user",
                     "content": (
