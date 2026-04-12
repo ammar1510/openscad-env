@@ -132,10 +132,83 @@ _register(
         target_dimensions={"x": 40.0, "y": 30.0, "z": 60.0},
         target_volume=None,
         dimension_tolerance=0.25,
-        volume_tolerance=0.0,
         hints=(
             "Consider using rotate(), difference(), and hull() for organic "
             "shapes. A wedge shape with a slot cut into it works well."
+        ),
+    ),
+    Task(
+        task_id="bracket_with_holes",
+        description=(
+            "Create a flat mounting bracket: an 80mm × 40mm × 8mm rectangular "
+            "plate with 4 cylindrical through-holes (diameter 6mm) positioned at "
+            "the four corners, each hole centered 10mm from each adjacent edge. "
+            "Hole centers are at (x=10, y=10), (x=70, y=10), (x=10, y=30), and "
+            "(x=70, y=30) when the plate sits with its 80mm edge along x and 40mm "
+            "edge along y. The bracket should be a single solid piece with clean "
+            "vertical holes going all the way through the plate."
+        ),
+        difficulty="hard",
+        target_dimensions={"x": 80.0, "y": 40.0, "z": 8.0},
+        target_volume=24695.0,   # 80*40*8 - 4*pi*3^2*8
+        target_surface_area=8697.0,
+        dimension_tolerance=0.05,
+        volume_tolerance=0.10,
+        surface_area_tolerance=0.10,
+        # At any height through the 8mm plate the cross-section is the plate
+        # face minus 4 circular hole openings.
+        target_cross_sections=[
+            (0.2, 3087.0),  # 80*40 - 4*pi*9 ≈ 3087 mm²
+            (0.5, 3087.0),
+            (0.8, 3087.0),
+        ],
+        cross_section_tolerance=0.10,
+        expected_components=1,
+        hints=(
+            "Use difference() to subtract 4 cylinders from a base cube. "
+            "Position hole centers with translate([10,10,0]), "
+            "translate([70,10,0]), translate([10,30,0]), translate([70,30,0]). "
+            "Make each cylinder slightly taller than the plate for a clean cut, "
+            "e.g. cylinder(h=10, r=3, center=true, $fn=32)."
+        ),
+    ),
+    Task(
+        task_id="spur_gear",
+        description=(
+            "Create a spur gear with the following specifications:\n"
+            "- Number of teeth: 20\n"
+            "- Module: 2mm  (pitch diameter = module × teeth = 40mm)\n"
+            "- Addendum circle (outer) diameter: 44mm  (radius 22mm)\n"
+            "- Dedendum circle (root) diameter: 35mm  (radius 17.5mm)\n"
+            "- Face width (gear height): 10mm\n"
+            "The gear must have 20 evenly-spaced, well-formed teeth around its "
+            "full circumference. Use $fn=60 or higher for smooth curves. "
+            "A central bore is optional."
+        ),
+        difficulty="expert",
+        target_dimensions={"x": 44.0, "y": 44.0, "z": 10.0},
+        # π*17.5²*10 (root disc) + 0.5*π*(22²-17.5²)*10 (tooth volume, ~50% fill)
+        target_volume=12000.0,
+        target_surface_area=None,  # tooth profile surface is too implementation-dependent
+        dimension_tolerance=0.05,
+        volume_tolerance=0.30,  # wide: exact tooth geometry varies by approach
+        # At any z-slice: root disc area + ~50% of annulus between root and addendum
+        target_cross_sections=[
+            (0.1, 1241.0),  # π*17.5² + 0.5*π*(22²-17.5²) ≈ 1241 mm²
+            (0.5, 1241.0),
+            (0.9, 1241.0),
+        ],
+        cross_section_tolerance=0.35,  # wide: involute vs approximated teeth differ
+        expected_components=1,
+        hints=(
+            "Option 1 — MCAD library (if available):\n"
+            "  include <MCAD/gears.scad>;\n"
+            "  gear(number_of_teeth=20, circular_pitch=floor(180*2/20), ...);\n"
+            "Option 2 — Manual with for() loop: start with a root-circle cylinder "
+            "(r=17.5, h=10), then use a for(i=[0:19]) loop with rotate([0,0,i*18]) "
+            "and hull()/difference() to add or carve each tooth.\n"
+            "Option 3 — Approximate teeth as rounded bumps: place small cylinders "
+            "at the pitch radius (r=20) using rotate_extrude() or hull()."
         ),
     ),
 )

@@ -280,7 +280,13 @@ _WEIGHTS_GEOMETRIC = {
 
 
 class OpenSCADRubric(Rubric):
-    """Top-level rubric composing geometric + optional vision scoring."""
+    """Top-level rubric composing geometric + optional vision scoring.
+
+    Rubrics whose task has no applicable target (e.g. no target_volume for a
+    creative-design task) are excluded entirely and their weights are
+    redistributed proportionally among the remaining rubrics.  This prevents
+    inapplicable checks from handing out free points.
+    """
 
     def __init__(
         self,
@@ -291,56 +297,70 @@ class OpenSCADRubric(Rubric):
         self._task = task
         self._vision_enabled = vision_config is not None
 
+        # Determine which optional rubrics apply to this task
+        has_cross_sections = bool(task.target_cross_sections)
+        has_volume = task.target_volume is not None and task.target_volume > 0
+        has_surface_area = (
+            task.target_surface_area is not None and task.target_surface_area > 0
+        )
+
+        # Always-present rubrics
         self.compilation = CompilationRubric()
         self.watertight = WatertightRubric()
         self.component_count = ComponentCountRubric(task)
-        self.cross_section = CrossSectionRubric(task)
         self.code_parsability = CodeParsabilityRubric()
         self.dimensions = DimensionsRubric(task)
-        self.volume = VolumeRubric(task)
-        self.surface_area = SurfaceAreaRubric(task)
+
+        base_weights = dict(
+            _WEIGHTS_WITH_VISION if self._vision_enabled else _WEIGHTS_GEOMETRIC
+        )
+
+        # Build rubric list, dropping entries with no applicable target
+        rubric_map: Dict[str, Rubric] = {
+            "compilation": self.compilation,
+            "watertight": self.watertight,
+            "component_count": self.component_count,
+            "code_parsability": self.code_parsability,
+            "dimensions": self.dimensions,
+        }
+
+        if has_cross_sections:
+            self.cross_section = CrossSectionRubric(task)
+            rubric_map["cross_section"] = self.cross_section
+        else:
+            base_weights.pop("cross_section", None)
+
+        if has_volume:
+            self.volume = VolumeRubric(task)
+            rubric_map["volume"] = self.volume
+        else:
+            base_weights.pop("volume", None)
+
+        if has_surface_area:
+            self.surface_area = SurfaceAreaRubric(task)
+            rubric_map["surface_area"] = self.surface_area
+        else:
+            base_weights.pop("surface_area", None)
 
         if self._vision_enabled:
             self.vision = VisionJudgeRubric(task, vision_config)
-            w = _WEIGHTS_WITH_VISION
-            weights = [
-                w["compilation"], w["watertight"], w["component_count"],
-                w["cross_section"], w["code_parsability"], w["dimensions"],
-                w["volume"], w["surface_area"], w["vision"],
-            ]
-            rubrics = [
-                self.compilation, self.watertight, self.component_count,
-                self.cross_section, self.code_parsability, self.dimensions,
-                self.volume, self.surface_area, self.vision,
-            ]
-        else:
-            w = _WEIGHTS_GEOMETRIC
-            weights = [
-                w["compilation"], w["watertight"], w["component_count"],
-                w["cross_section"], w["code_parsability"], w["dimensions"],
-                w["volume"], w["surface_area"],
-            ]
-            rubrics = [
-                self.compilation, self.watertight, self.component_count,
-                self.cross_section, self.code_parsability, self.dimensions,
-                self.volume, self.surface_area,
-            ]
+            rubric_map["vision"] = self.vision
+
+        # Normalise so weights still sum to 1.0
+        total = sum(base_weights[k] for k in rubric_map if k in base_weights)
+        rubrics = list(rubric_map.values())
+        weights = [base_weights[name] / total for name in rubric_map]
 
         scorer = WeightedSum(rubrics, weights)
         object.__setattr__(self, "_scorer", scorer)
+        object.__setattr__(self, "_rubric_map", rubric_map)
 
     def forward(self, action: Any, observation: Any) -> float:
         return _clamp(self._scorer(action, observation))
 
     def reset(self) -> None:
-        self.compilation.last_score = None
-        self.watertight.last_score = None
-        self.component_count.last_score = None
-        self.cross_section.last_score = None
-        self.code_parsability.last_score = None
-        self.dimensions.last_score = None
-        self.volume.last_score = None
-        self.surface_area.last_score = None
-        if self._vision_enabled:
-            self.vision.last_score = None
+        rubric_map: Dict[str, Rubric] = object.__getattribute__(self, "_rubric_map")
+        for rubric in rubric_map.values():
+            rubric.last_score = None
+        if self._vision_enabled and hasattr(self, "vision"):
             self.vision.breakdown = {}
