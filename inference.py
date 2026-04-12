@@ -280,9 +280,8 @@ def main() -> None:
         try:
             score = run_task(env, client, task_id)
             scores[task_id] = score
-        except Exception as e:
+        except Exception:
             # log_end is already emitted by run_task's finally block
-            print(f"[ERROR] task={task_id} error={type(e).__name__}: {e}", file=sys.stderr, flush=True)
             scores[task_id] = 0.01
         finally:
             try:
